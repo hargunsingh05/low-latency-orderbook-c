@@ -129,6 +129,47 @@ static void test_invalid_and_duplicate_orders(void)
     puts("PASS: invalid and duplicate orders");
 }
 
+
+static void test_buy_arrives_first(void)
+{
+    OrderBook *book = create_orderbook();
+    assert(book != NULL);
+
+    assert(add_order(book, 60, SIDE_BUY, 101.0, 5));
+    assert(add_order(book, 61, SIDE_SELL, 99.0, 5));
+
+    assert(book->best_bid->head->timestamp <
+           book->best_ask->head->timestamp);
+
+    match_orders(book);
+
+    assert(book->best_bid == NULL);
+    assert(book->best_ask == NULL);
+
+    free_orderbook(book);
+    puts("PASS: buy arrives first (check trade price is 101.00)");
+}
+
+static void test_sell_arrives_first(void)
+{
+    OrderBook *book = create_orderbook();
+    assert(book != NULL);
+
+    assert(add_order(book, 70, SIDE_SELL, 99.0, 5));
+    assert(add_order(book, 71, SIDE_BUY, 101.0, 5));
+
+    assert(book->best_ask->head->timestamp <
+           book->best_bid->head->timestamp);
+
+    match_orders(book);
+
+    assert(book->best_bid == NULL);
+    assert(book->best_ask == NULL);
+
+    free_orderbook(book);
+    puts("PASS: sell arrives first (check trade price is 99.00)");
+}
+
 int main(void)
 {
     test_price_priority();
@@ -137,7 +178,9 @@ int main(void)
     test_ask_price_priority();
     test_cancellation();
     test_invalid_and_duplicate_orders();
+    test_buy_arrives_first();
+    test_sell_arrives_first();
 
-    puts("\nAll 6 tests passed.");
+    puts("\nAll 8 tests passed.");
     return 0;
 }

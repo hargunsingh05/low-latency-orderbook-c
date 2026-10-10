@@ -221,7 +221,7 @@ bool add_order(
     order->side = side;
     order->price = price;
     order->qty = qty;
-    order->timestamp = 0;
+    order->timestamp = book->total_orders_processed;
     order->prev = level->tail;
     order->next = NULL;
 
@@ -273,7 +273,10 @@ void match_orders(OrderBook *book)
 
         uint64_t buy_id = buy->order_id;
         uint64_t sell_id = sell->order_id;
-        double execution_price = ask_level->price;
+        double execution_price =
+            (buy->timestamp < sell->timestamp)
+                ? buy->price
+                : sell->price;
 
         printf("[TRADE] Buy ID: %llu | Sell ID: %llu\n",
                (unsigned long long)buy_id,
