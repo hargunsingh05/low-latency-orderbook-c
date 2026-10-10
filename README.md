@@ -1,29 +1,30 @@
-# Ultra-Low Latency Limit Order Book & OFI Signal Generator
+Low-Latency
 
-An in-memory, high-frequency limit order book (LOB) and real-time Order Flow Imbalance (OFI) signal engine implemented in standard C (C99). Designed for low-latency market microstructure research, high-frequency execution simulation, and quantitative trading strategy backtesting.
+Limitations and Future Work
 
----
+* Dynamic hash-table resizing and load-factor management
+* More extensive correctness tests, including hash collisions and large workloads
+* Stronger automated assertions for executed trade prices and quantities
+* Separate benchmarks for insertion, cancellation, and matching
+* Repeated benchmark trials with controlled compiler flags and workload sizes
+* Profiling and optimisation of price-level lookup
+* Concurrent order processing and market-data integration
 
-## Technical Features
+Technologies
 
-* **$O(1)$ Order Book Operations:** Constant time order insertions, cancellations, and execution matching using doubly-linked list price levels combined with hash-indexed order lookups.
-* **Lock-Free Ring Buffer:** Ingests high-throughput tick data across threads with minimal contention using atomic circular buffers.
-* **Order Flow Imbalance (OFI) Calculation:** Computes multi-level OFI metrics across top-5 bid/ask depth in real time:
-  $$\text{OFI}_t = \Delta V_t^b - \Delta V_t^a$$
-* **Multithreaded Architecture:** Decouples market data feed parsing from signal generation using POSIX threads (`pthreads`) and CPU core affinity pinning.
-* **Zero-Memory-Leak Validation:** Strict dynamic memory management tested and validated using Valgrind and GCC AddressSanitizer (`ASan`).
+* C
+* GCC
+* Make
+* Linked lists
+* Hash tables
+* Automated testing
+* AddressSanitizer and UndefinedBehaviorSanitizer
 
----
+Author
 
-## Directory Structure
+Hargun Singh
 
-```text
-├── src/
-│   ├── orderbook.c    # Core LOB dynamic structures and matching algorithms
-│   ├── ofi_signal.c   # Multi-level Order Flow Imbalance calculation engine
-│   └── main.c         # High-throughput market data feed simulator
-├── include/
-│   ├── orderbook.h    # Data models (Order, PriceLevel, OrderBook)
-│   └── ofi_signal.h   # OFI engine function declarations
-├── Makefile           # GCC build rules with -O3 optimization flags
-└── README.md          # System documentation
+GitHub: @hargunsingh05
+
+
+

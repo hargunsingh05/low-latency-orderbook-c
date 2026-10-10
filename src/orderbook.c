@@ -6,16 +6,67 @@
 
 /*
  * Multi-level limit order book.
- *
- * Price levels are maintained in sorted doubly-linked lists:
- *   - Bids: highest price first.
- *   - Asks: lowest price first.
- *
- * Orders at the same price are matched FIFO.
- *
- * Note: linked-list price-level insertion is O(number of levels).
- * This implementation is not lock-free or a complete exchange feed engine.
+ * Bids: highest price first.
+ * Asks: lowest price first.
+ * Orders at each price level: FIFO.
+ * Order IDs: hash table for faster lookup.
  */
+
+/* ---------- Order ID hash table ---------- */
+
+static size_t hash_order_id(uint64_t id, size_t table_size)
+{
+    id ^= id >> 33;
+    id *= UINT64_C(0xff51afd7ed558ccd);
+    id ^= id >> 33;
+    id *= UINT64_C(0xc4ceb9fe1a85ec53);
+    id ^= id >> 33;
+
+    return (size_t)(id % table_size);
+}
+
+static Order *find_order_by_id(const OrderBook *book, uint64_t id)
+{
+    size_t index = hash_order_id(id, book->order_id_table_size);
+
+    for (Order *order = book->order_id_table[index];
+         order != NULL;
+         order = order->hash_next) {
+        if (order->order_id == id) {
+            return order;
+        }
+    }
+
+    return NULL;
+}
+
+static void insert_order_hash(OrderBook *book, Order *order)
+{
+    size_t index = hash_order_id(
+        order->order_id, book->order_id_table_size);
+
+    order->hash_next = book->order_id_table[index];
+    book->order_id_table[index] = order;
+}
+
+static void remove_order_hash(OrderBook *book, uint64_t id)
+{
+    size_t index = hash_order_id(id, book->order_id_table_size);
+    Order **current = &book->order_id_table[index];
+
+    while (*current != NULL) {
+        if ((*current)->order_id == id) {
+            Order *removed = *current;
+            *current = removed->hash_next;
+            removed->hash_next = NULL;
+            return;
+        }
+
+        current = &(*current)->hash_next;
+    }
+}
+
+/* ---------- Price levels ---------- */
 
 static PriceLevel *create_price_level(double price)
 {
@@ -53,9 +104,7 @@ static void free_price_level(PriceLevel *level)
     free(level);
 }
 
-static PriceLevel *find_price_level(
-    PriceLevel *root,
-    double price)
+static PriceLevel *find_price_level(PriceLevel *root, double price)
 {
     while (root != NULL) {
         if (root->price == price) {
@@ -68,14 +117,8 @@ static PriceLevel *find_price_level(
     return NULL;
 }
 
-/*
- * Insert a price level in price priority order.
- * Bids: descending. Asks: ascending.
- */
 static PriceLevel *get_or_create_level(
-    OrderBook *book,
-    Side side,
-    double price)
+    OrderBook *book, Side side, double price)
 {
     PriceLevel **root =
         (side == SIDE_BUY) ? &book->best_bid : &book->best_ask;
@@ -96,15 +139,12 @@ static PriceLevel *get_or_create_level(
     PriceLevel *previous = NULL;
 
     while (current != NULL) {
-        bool should_insert_before;
+        bool insert_before =
+            (side == SIDE_BUY)
+                ? price > current->price
+                : price < current->price;
 
-        if (side == SIDE_BUY) {
-            should_insert_before = price > current->price;
-        } else {
-            should_insert_before = price < current->price;
-        }
-
-        if (should_insert_before) {
+        if (insert_before) {
             break;
         }
 
@@ -129,9 +169,7 @@ static PriceLevel *get_or_create_level(
 }
 
 static void unlink_empty_level(
-    OrderBook *book,
-    Side side,
-    PriceLevel *level)
+    OrderBook *book, Side side, PriceLevel *level)
 {
     if (level == NULL || level->head != NULL) {
         return;
@@ -153,6 +191,8 @@ static void unlink_empty_level(
     free(level);
 }
 
+/* ---------- Order book lifecycle ---------- */
+
 OrderBook *create_orderbook(void)
 {
     OrderBook *book = malloc(sizeof(*book));
@@ -164,9 +204,47 @@ OrderBook *create_orderbook(void)
     book->best_bid = NULL;
     book->best_ask = NULL;
     book->total_orders_processed = 0;
+    book->order_id_table_size = ORDER_ID_TABLE_SIZE;
+
+    book->order_id_table = calloc(
+        book->order_id_table_size,
+        sizeof(*book->order_id_table));
+
+    if (book->order_id_table == NULL) {
+        free(book);
+        return NULL;
+    }
 
     return book;
 }
+
+void free_orderbook(OrderBook *book)
+{
+    if (book == NULL) {
+        return;
+    }
+
+    PriceLevel *level = book->best_bid;
+
+    while (level != NULL) {
+        PriceLevel *next = level->next;
+        free_price_level(level);
+        level = next;
+    }
+
+    level = book->best_ask;
+
+    while (level != NULL) {
+        PriceLevel *next = level->next;
+        free_price_level(level);
+        level = next;
+    }
+
+    free(book->order_id_table);
+    free(book);
+}
+
+/* ---------- Add order ---------- */
 
 bool add_order(
     OrderBook *book,
@@ -182,24 +260,8 @@ bool add_order(
         return false;
     }
 
-    /*
-     * Prevent duplicate IDs. This implementation searches all levels;
-     * a hash table will be a separate optimization.
-     */
-    PriceLevel *roots[2] = {book->best_bid, book->best_ask};
-
-    for (size_t i = 0; i < 2; ++i) {
-        for (PriceLevel *level = roots[i];
-             level != NULL;
-             level = level->next) {
-            for (Order *current = level->head;
-                 current != NULL;
-                 current = current->next) {
-                if (current->order_id == id) {
-                    return false;
-                }
-            }
-        }
+    if (find_order_by_id(book, id) != NULL) {
+        return false;
     }
 
     PriceLevel *level = get_or_create_level(book, side, price);
@@ -224,6 +286,7 @@ bool add_order(
     order->timestamp = book->total_orders_processed;
     order->prev = level->tail;
     order->next = NULL;
+    order->hash_next = NULL;
 
     if (level->tail != NULL) {
         level->tail->next = order;
@@ -235,15 +298,14 @@ bool add_order(
     level->total_volume += qty;
     level->order_count++;
 
+    insert_order_hash(book, order);
     book->total_orders_processed++;
 
     return true;
 }
 
-/*
- * Match crossing orders using price priority and FIFO within a level.
- * Trades execute at the resting order's price.
- */
+/* ---------- Match orders ---------- */
+
 void match_orders(OrderBook *book)
 {
     if (book == NULL) {
@@ -273,6 +335,7 @@ void match_orders(OrderBook *book)
 
         uint64_t buy_id = buy->order_id;
         uint64_t sell_id = sell->order_id;
+
         double execution_price =
             (buy->timestamp < sell->timestamp)
                 ? buy->price
@@ -291,6 +354,8 @@ void match_orders(OrderBook *book)
         ask_level->total_volume -= traded;
 
         if (buy->qty == 0) {
+            remove_order_hash(book, buy_id);
+
             bid_level->head = buy->next;
 
             if (bid_level->head != NULL) {
@@ -304,6 +369,8 @@ void match_orders(OrderBook *book)
         }
 
         if (sell->qty == 0) {
+            remove_order_hash(book, sell_id);
+
             ask_level->head = sell->next;
 
             if (ask_level->head != NULL) {
@@ -321,81 +388,49 @@ void match_orders(OrderBook *book)
     }
 }
 
-/*
- * Cancel an order by ID.
- * Returns true if the order was found and cancelled.
- */
+/* ---------- Cancel order ---------- */
+
 bool cancel_order(OrderBook *book, uint64_t id)
 {
     if (book == NULL) {
         return false;
     }
 
-    PriceLevel *roots[2] = {book->best_bid, book->best_ask};
+    Order *order = find_order_by_id(book, id);
 
-    for (size_t i = 0; i < 2; ++i) {
-        Side side = (i == 0) ? SIDE_BUY : SIDE_SELL;
-
-        for (PriceLevel *level = roots[i];
-             level != NULL;
-             level = level->next) {
-
-            for (Order *order = level->head;
-                 order != NULL;
-                 order = order->next) {
-
-                if (order->order_id != id) {
-                    continue;
-                }
-
-                level->total_volume -= order->qty;
-
-                if (order->prev != NULL) {
-                    order->prev->next = order->next;
-                } else {
-                    level->head = order->next;
-                }
-
-                if (order->next != NULL) {
-                    order->next->prev = order->prev;
-                } else {
-                    level->tail = order->prev;
-                }
-
-                level->order_count--;
-                free(order);
-
-                unlink_empty_level(book, side, level);
-
-                return true;
-            }
-        }
+    if (order == NULL) {
+        return false;
     }
 
-    return false;
-}
+    Side side = order->side;
+    PriceLevel *level =
+        find_price_level(
+            (side == SIDE_BUY) ? book->best_bid : book->best_ask,
+            order->price);
 
-void free_orderbook(OrderBook *book)
-{
-    if (book == NULL) {
-        return;
+    if (level == NULL) {
+        return false;
     }
 
-    PriceLevel *level = book->best_bid;
+    remove_order_hash(book, id);
+    level->total_volume -= order->qty;
 
-    while (level != NULL) {
-        PriceLevel *next = level->next;
-        free_price_level(level);
-        level = next;
+    if (order->prev != NULL) {
+        order->prev->next = order->next;
+    } else {
+        level->head = order->next;
     }
 
-    level = book->best_ask;
-
-    while (level != NULL) {
-        PriceLevel *next = level->next;
-        free_price_level(level);
-        level = next;
+    if (order->next != NULL) {
+        order->next->prev = order->prev;
+    } else {
+        level->tail = order->prev;
     }
 
-    free(book);
+    level->order_count--;
+    free(order);
+
+    unlink_empty_level(book, side, level);
+
+    return true;
 }
