@@ -2,3 +2,5 @@
 orderbook_engine
 test_orderbook
 *.dSYM/
+# Benchmark build output
+/benchmark
