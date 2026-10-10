@@ -1,3 +1,4 @@
 *.o
 orderbook_engine
 test_orderbook
+*.dSYM/
