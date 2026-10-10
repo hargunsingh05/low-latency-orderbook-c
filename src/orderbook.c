@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -269,6 +270,16 @@ void match_orders(OrderBook *book)
         if (traded == 0) {
             break;
         }
+
+        uint64_t buy_id = buy->order_id;
+        uint64_t sell_id = sell->order_id;
+        double execution_price = ask_level->price;
+
+        printf("[TRADE] Buy ID: %llu | Sell ID: %llu\n",
+               (unsigned long long)buy_id,
+               (unsigned long long)sell_id);
+        printf("        Price: %.2f | Quantity: %u\n",
+               execution_price, traded);
 
         buy->qty -= traded;
         sell->qty -= traded;
