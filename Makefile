@@ -28,3 +28,13 @@ sanitize: clean all
 
 clean:
 	rm -f $(OBJ) $(TARGET)
+
+TEST_TARGET = test_orderbook
+TEST_SRC = tests/test_orderbook.c src/orderbook.c
+
+$(TEST_TARGET): $(TEST_SRC) include/orderbook.h
+	$(CC) $(CFLAGS) -O0 $(TEST_SRC) -o $(TEST_TARGET)
+
+.PHONY: test
+test: $(TEST_TARGET)
+	./$(TEST_TARGET)
