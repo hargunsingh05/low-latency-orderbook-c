@@ -6,7 +6,10 @@ SRC = src/orderbook.c src/main.c
 OBJ = $(SRC:.c=.o)
 TARGET = orderbook_engine
 
-.PHONY: all clean run debug sanitize
+TEST_TARGET = test_orderbook
+TEST_SRC = tests/test_orderbook.c src/orderbook.c
+
+.PHONY: all clean run debug sanitize test
 
 all: $(TARGET)
 
@@ -19,22 +22,21 @@ src/%.o: src/%.c include/orderbook.h
 run: $(TARGET)
 	./$(TARGET)
 
-debug: CFLAGS += -O0
-debug: clean all
+debug:
+	$(MAKE) clean
+	$(MAKE) OPTFLAGS=-O0 all
 
-sanitize: CFLAGS += -O1 -fsanitize=address,undefined -fno-omit-frame-pointer
-sanitize: clean all
+sanitize:
+	$(MAKE) clean
+	$(MAKE) OPTFLAGS="-O1 -fsanitize=address,undefined -fno-omit-frame-pointer" all
 	./$(TARGET)
-
-clean:
-	rm -f $(OBJ) $(TARGET)
-
-TEST_TARGET = test_orderbook
-TEST_SRC = tests/test_orderbook.c src/orderbook.c
 
 $(TEST_TARGET): $(TEST_SRC) include/orderbook.h
 	$(CC) $(CFLAGS) -O0 $(TEST_SRC) -o $(TEST_TARGET)
 
-.PHONY: test
 test: $(TEST_TARGET)
 	./$(TEST_TARGET)
+
+clean:
+	rm -f $(OBJ) $(TARGET) $(TEST_TARGET)
+	rm -rf *.dSYM
